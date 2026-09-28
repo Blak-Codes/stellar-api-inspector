@@ -44,6 +44,12 @@ import {
   analyzeTransaction,
   validateTransactionHash as validateTxHash,
 } from '../services/transaction-analyzer';
+import {
+  formatClaimableBalanceReport,
+  formatOffersReport,
+  inspectAccountOffers,
+  inspectClaimableBalance,
+} from '../services/account-market';
 import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import dotenv from 'dotenv';
@@ -2047,6 +2053,79 @@ program
         }
 
         writeResult(analysis, options, text);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// 14. Account market and claimable balance inspectors
+// ---------------------------------------------------------------------------
+program
+  .command('offers <accountId>')
+  .description('Inspect open DEX offers for a Stellar account')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-l, --limit <number>', 'Maximum offers to retrieve', '20')
+  .option('-c, --cursor <cursor>', 'Horizon pagination cursor')
+  .option('--order <order>', 'Pagination order: asc or desc', 'desc')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      accountId: string,
+      options: {
+        horizon: string;
+        limit: string;
+        cursor?: string;
+        order: 'asc' | 'desc';
+        json?: boolean;
+        output?: string;
+      },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(`Fetching open offers for ${accountId}`, !!options.json).start();
+      try {
+        const report = await inspectAccountOffers({
+          horizonUrl: options.horizon,
+          accountId,
+          limit: Number.parseInt(options.limit, 10),
+          cursor: options.cursor,
+          order: options.order === 'asc' ? 'asc' : 'desc',
+        });
+        spinner.succeed(`Offer inspection complete — ${report.count} open offer(s).`);
+        writeResult(report, options, formatOffersReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('claimable-balance <balanceId>')
+  .description('Inspect a Horizon claimable balance and decode claimant predicates')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (balanceId: string, options: { horizon: string; json?: boolean; output?: string }) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Fetching claimable balance ${balanceId}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await inspectClaimableBalance(options.horizon, balanceId);
+        spinner.succeed(`Claimable balance inspection complete.`);
+        writeResult(report, options, formatClaimableBalanceReport(report));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
