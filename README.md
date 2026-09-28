@@ -13,7 +13,10 @@ A command-line inspection and health-checking tool for Stellar Horizon and Sorob
 - **🔎 Soroban Transaction Inspection**: Inspect execution status, contract events, diagnostic events, resource usage, and fee breakdown for any submitted Soroban transaction.
 - **🧬 Soroban Contract Inspection**: Retrieve contract instance metadata, WASM code hash, ledger footprint, storage counts, and TTL expiration warnings.
 - **📜 Transaction Operation Analysis**: Fetch any Stellar transaction from Horizon and decode each operation into human-readable descriptions, with asset movement summaries and JSON output.
+- **🧭 Path Payment Routes**: Inspect strict-send and strict-receive payment routes without building or submitting transactions.
+- **🧾 Transaction & Operation Effects**: Retrieve Horizon effects for transactions or individual operations and summarize affected accounts/assets.
 - **🛡️ Account Auditor**: Detailed structural audits of accounts: analyze thresholds, verify signer weights (multi-sig checks), inspect asset balances, and detect trustline authorization/limit risks.
+- **🗂️ Account Data Entries**: Decode account data entries with raw Base64, UTF-8, byte length, and hex views.
 - **📈 Market Trade History**: Retrieve recent trades for any Stellar asset pair, display per-trade details, and compute summary statistics (volume, average/high/low price).
 - **📜 Operations History**: Fetch Horizon operations, filter by account/type/limit, and normalize common operation details.
 - **🧭 Interactive Mode**: Launch a guided menu when the CLI is run without arguments.
@@ -215,6 +218,37 @@ npm run dev -- horizon https://horizon-testnet.stellar.org --json
 ```
 
 Endpoints served over plain `http://` report `httpsEnabled: false` with a warning recommending HTTPS. If the TLS handshake cannot be completed (timeout, connection refused, missing certificate), the command still succeeds and surfaces the failure under `tls.error` with a corresponding warning — Horizon endpoint inspection is never blocked by TLS issues.
+
+### Path Payment Routes
+Inspect available payment paths without submitting a transaction:
+
+```bash
+npm run dev -- paths --mode strict-send --source-asset native --source-amount 10 --destination-account G...
+npm run dev -- paths --mode strict-receive --source-account G... --destination-asset native --destination-amount 10 --sort hops --json
+```
+
+Issued assets use `CODE:G...` format. The report normalizes source/destination assets and amounts, intermediary hops, and effective route rates.
+
+### Transaction and Operation Effects
+Analyze concrete ledger effects produced by a transaction or a single operation:
+
+```bash
+npm run dev -- analyze-effects <64-character-transaction-hash> --limit 100
+npm run dev -- operation-effects <operation-id> --json
+```
+
+The reports group effects by type and summarize affected accounts, assets, and amount-bearing asset movements while preserving raw Horizon records in JSON output.
+
+### Account Data Entries
+Inspect account data entries with safe decoding:
+
+```bash
+npm run dev -- account-data G...
+npm run dev -- account-data G... --key app.config --json
+npm run dev -- account-data G... --prefix app.
+```
+
+The command preserves the raw encoded value, reports byte sizes, decodes UTF-8-compatible data, and labels binary values with hexadecimal output.
 
 ### Soroban RPC Inspection
 Verify a Soroban RPC node's health, network configuration, protocol version, and ledger synchronization status:
