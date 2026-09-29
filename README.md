@@ -13,6 +13,7 @@ A command-line inspection and health-checking tool for Stellar Horizon and Sorob
 - **🔎 Soroban Transaction Inspection**: Inspect execution status, contract events, diagnostic events, resource usage, and fee breakdown for any submitted Soroban transaction.
 - **🧬 Soroban Contract Inspection**: Retrieve contract instance metadata, WASM code hash, ledger footprint, storage counts, and TTL expiration warnings.
 - **📜 Transaction Operation Analysis**: Fetch any Stellar transaction from Horizon and decode each operation into human-readable descriptions, with asset movement summaries and JSON output.
+- **🧾 Transaction Result Analysis**: Decode transaction result XDR, explain transaction and operation failures, and retain the raw result XDR for debugging.
 - **🛡️ Account Auditor**: Detailed structural audits of accounts: analyze thresholds, verify signer weights (multi-sig checks), inspect asset balances, and detect trustline authorization/limit risks.
 - **📈 Market Trade History**: Retrieve recent trades for any Stellar asset pair, display per-trade details, and compute summary statistics (volume, average/high/low price).
 - **📜 Operations History**: Fetch Horizon operations, filter by account/type/limit, and normalize common operation details.
@@ -1042,6 +1043,37 @@ Save to file:
 ```bash
 npm run dev -- soroban-tx <transactionHash> --json --output tx-report.json
 npm run dev -- compare-endpoints https://horizon.stellar.org https://horizon-testnet.stellar.org --json --output comparison.json
+```
+
+### Transaction Result Analysis
+
+Inspect the protocol-level outcome of a transaction retrieved from Horizon:
+
+```bash
+npm run dev -- result <transactionHash>
+npm run dev -- result <transactionHash> --horizon https://horizon.stellar.org
+npm run dev -- result <transactionHash> --json
+npm run dev -- result <transactionHash> --verbose
+```
+
+The report distinguishes successful transactions, transaction-level failures, and operation-level failures. It includes the ledger sequence, result code and explanation, whether operations were applied, fee charged, operation count, and any operation result codes. Failed transactions are atomic: when a transaction or operation fails, its operations are not applied, though the transaction fee may still be charged.
+
+Common result codes include:
+
+| Code | Meaning |
+|---|---|
+| `tx_bad_seq` | The transaction sequence number is invalid or out of date. |
+| `tx_bad_auth` | The transaction is missing required signatures. |
+| `tx_insufficient_balance` | The source account cannot cover the transaction fee. |
+| `tx_insufficient_fee` | The transaction fee is below the network minimum. |
+| `tx_too_early` / `tx_too_late` | The transaction fell outside its time bounds. |
+| `tx_failed` | An operation failed; operation-specific results follow when available. |
+| `PAYMENT_UNDERFUNDED` | A payment source does not have enough balance. |
+
+Unknown result codes remain in the report with a generic description rather than causing analysis to fail. The extensible result registry is exported from `src/services/transaction-result-analyzer.ts`. JSON output retains the raw XDR as `resultXdr`; `--verbose` adds decoded result details:
+
+```bash
+npm run dev -- result <transactionHash> --json --verbose
 ```
 
 ### Transaction Operation Analysis
