@@ -14,7 +14,9 @@ import { inspectAccountFlags } from '../inspectors/flags';
 import { inspectSoroban, validateSorobanUrl } from '../inspectors/soroban';
 import { inspectRpcCapabilities, validateRpcUrl } from '../inspectors/rpc-capabilities';
 import { formatContractInspectionReport } from '../output/contract-report';
+import { formatAccountMergeAudit } from '../output/account-merge-audit';
 import { auditAccount } from '../inspectors/account';
+import { auditAccountMerge, validateMergeAccountIds } from '../inspectors/account-merge-audit';
 import { fetchOrderBook } from '../inspectors/orderbook';
 import { runHealthDashboard } from '../inspectors/health';
 import { parseAsset } from '../utils/assets';
@@ -613,6 +615,49 @@ program
       text += formatTable(signerRows);
 
       writeResult(audit, options, text);
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// Account Merge Safety Audit
+// ---------------------------------------------------------------------------
+program
+  .command('account-merge-audit <sourceAccount> <destinationAccount>')
+  .description('Read-only preflight audit of whether a Stellar source account appears merge-ready')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option(
+    '--history-depth <count>',
+    'Inspect up to this many recent source-account operations',
+    '0',
+  )
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      sourceAccount: string,
+      destinationAccount: string,
+      options: { horizon: string; historyDepth: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const validation = validateMergeAccountIds(sourceAccount, destinationAccount);
+      const historyDepth = Number(options.historyDepth);
+      if (!validation.valid || !Number.isInteger(historyDepth) || historyDepth < 0) {
+        const message = validation.error ?? 'History depth must be a non-negative integer';
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+
+      const spinner = makeSpinner(
+        'Inspecting source and destination accounts...',
+        !!options.json,
+      ).start();
+      const report = await auditAccountMerge(options.horizon, sourceAccount, destinationAccount, {
+        historyDepth,
+      });
+      spinner.succeed('Account merge audit complete.');
+
+      writeResult(report, options, formatAccountMergeAudit(report));
     },
   );
 
