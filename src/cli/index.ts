@@ -44,7 +44,12 @@ import {
   analyzeTransaction,
   validateTransactionHash as validateTxHash,
 } from '../services/transaction-analyzer';
-import { analyzeTransactionResult } from '../services/transaction-result-analyzer';
+import {
+  formatLiquidityPoolReport,
+  formatSponsorshipReport,
+  inspectLiquidityPool,
+  inspectSponsorship,
+} from '../services/sponsorship-liquidity';
 import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import dotenv from 'dotenv';
@@ -2141,6 +2146,73 @@ program
         }
 
         writeResult(analysis, options, text);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// 14. Sponsorship and liquidity pool inspectors
+// ---------------------------------------------------------------------------
+program
+  .command('sponsorship <accountId>')
+  .description('Audit current sponsorship counters and sponsored account entries')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (accountId: string, options: { horizon: string; json?: boolean; output?: string }) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(`Auditing sponsorship for ${accountId}`, !!options.json).start();
+      try {
+        const report = await inspectSponsorship(options.horizon, accountId);
+        spinner.succeed(`Sponsorship audit complete.`);
+        writeResult(report, options, formatSponsorshipReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('liquidity-pool <poolId>')
+  .description('Inspect a Horizon liquidity pool and optional recent activity')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('--activity', 'Inspect recent pool trades, operations, and transactions')
+  .option('-l, --limit <number>', 'Recent activity records per collection', '20')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      poolId: string,
+      options: {
+        horizon: string;
+        activity?: boolean;
+        limit: string;
+        json?: boolean;
+        output?: string;
+      },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(`Inspecting liquidity pool ${poolId}`, !!options.json).start();
+      try {
+        const report = await inspectLiquidityPool(
+          options.horizon,
+          poolId,
+          !!options.activity,
+          Number.parseInt(options.limit, 10),
+        );
+        spinner.succeed(`Liquidity pool inspection complete.`);
+        writeResult(report, options, formatLiquidityPoolReport(report));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
