@@ -62,6 +62,8 @@ import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import { inspectContractEnvMeta } from '../services/contract-env-meta';
 import { formatContractEnvMetaReport } from '../output/contract-env-meta-report';
+import { analyzeAccountReserve } from '../services/account-reserve';
+import { formatAccountReserveReport } from '../output/account-reserve-report';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -2543,6 +2545,52 @@ program
         logger.error(message);
         process.exit(1);
       }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// ISSUE-043: Account Reserve & Liability Analysis
+// ---------------------------------------------------------------------------
+program
+  .command('account-reserve <accountId>')
+  .description(
+    'Analyze a Stellar account reserve requirements, liabilities, and spendable XLM balance',
+  )
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .option('-v, --verbose', 'Verbose mode')
+  .action(
+    async (
+      accountId: string,
+      options: { horizon: string; json?: boolean; output?: string; verbose?: boolean },
+    ) => {
+      if (options.verbose) logger.setLevel('debug');
+      if (options.json) logger.setJsonMode(true);
+
+      const horizonValidation = validateHorizonUrl(options.horizon);
+      if (!horizonValidation.valid) {
+        if (options.json) outputJsonError(horizonValidation.error!);
+        logger.error(horizonValidation.error!);
+        process.exit(1);
+      }
+
+      const spinner = makeSpinner(
+        `Analyzing reserves for account ${accountId.slice(0, 8)}...`,
+        !!options.json,
+      ).start();
+
+      const result = await analyzeAccountReserve(options.horizon, accountId);
+
+      if (!result) {
+        spinner.fail('Failed to load account from Horizon. Ensure the account ID is valid.');
+        if (options.json)
+          outputJsonError('Failed to load account from Horizon. Ensure the account ID is valid.');
+        process.exit(1);
+      }
+
+      spinner.succeed('Account reserve analysis complete.');
+      writeResult(result, options, formatAccountReserveReport(result));
     },
   );
 
