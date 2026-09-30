@@ -46,6 +46,8 @@ import {
 } from '../services/transaction-analyzer';
 import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
+import { inspectContractEnvMeta } from '../services/contract-env-meta';
+import { formatContractEnvMetaReport } from '../output/contract-env-meta-report';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -853,6 +855,86 @@ program
         });
 
         writeResult(result, options, text);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// Soroban Contract Environment Metadata Inspector
+// ---------------------------------------------------------------------------
+program
+  .command('contract-env-meta')
+  .description('Inspect and compare Soroban contract WASM environment metadata')
+  .option('--wasm <file>', 'Inspect a local WASM artifact')
+  .option('--wasm-hash <hash>', 'Inspect a deployed WASM artifact by its 32-byte hash')
+  .option('--contract-id <id>', 'Resolve and inspect a deployed contract ID')
+  .option('--compare-wasm <file>', 'Compare with another local WASM artifact')
+  .option('--compare-wasm-hash <hash>', 'Compare with another WASM hash')
+  .option('--compare-contract-id <id>', 'Compare with another deployed contract ID')
+  .option('-r, --rpc <url>', 'Soroban RPC endpoint', 'https://soroban-testnet.stellar.org')
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (options: {
+      wasm?: string;
+      wasmHash?: string;
+      contractId?: string;
+      compareWasm?: string;
+      compareWasmHash?: string;
+      compareContractId?: string;
+      rpc: string;
+      json?: boolean;
+      output?: string;
+    }) => {
+      if (options.json) logger.setJsonMode(true);
+
+      const primary = {
+        wasm: options.wasm,
+        wasmHash: options.wasmHash,
+        contractId: options.contractId,
+        rpcUrl: options.rpc,
+      };
+      const comparison = {
+        wasm: options.compareWasm,
+        wasmHash: options.compareWasmHash,
+        contractId: options.compareContractId,
+        rpcUrl: options.rpc,
+      };
+      const hasComparison = Boolean(
+        options.compareWasm || options.compareWasmHash || options.compareContractId,
+      );
+      const hasNetworkArtifact = Boolean(
+        options.wasmHash ||
+        options.contractId ||
+        options.compareWasmHash ||
+        options.compareContractId,
+      );
+      if (hasNetworkArtifact) {
+        const validation = validateSorobanUrl(options.rpc);
+        if (!validation.valid) {
+          if (options.json) outputJsonError(validation.error!);
+          logger.error(validation.error!);
+          process.exit(1);
+        }
+      }
+
+      const spinner = makeSpinner(
+        'Inspecting Soroban environment metadata...',
+        !!options.json,
+      ).start();
+      try {
+        const result = await inspectContractEnvMeta(
+          primary,
+          hasComparison ? comparison : undefined,
+        );
+        spinner.succeed('Environment metadata inspection complete.');
+        writeResult(result, options, formatContractEnvMetaReport(result));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
