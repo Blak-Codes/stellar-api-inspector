@@ -58,12 +58,21 @@ import {
   inspectLiquidityPool,
   inspectSponsorship,
 } from '../services/sponsorship-liquidity';
+import {
+  analyzeTransactionEffects,
+  formatAccountDataReport,
+  formatEffectsReport,
+  formatPathsReport,
+  inspectAccountData,
+  inspectOperationEffects,
+  inspectPaths,
+} from '../services/route-effects-data';
 import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import { inspectContractEnvMeta } from '../services/contract-env-meta';
 import { formatContractEnvMetaReport } from '../output/contract-env-meta-report';
-import { analyzeFeeMarket } from '../services/fee-market';
-import { formatFeeMarketReport } from '../output/fee-market-report';
+import { verifyTransactionSignatures } from '../services/signature-verifier';
+import { verifyWasmIntegrity } from '../services/wasm-integrity';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -774,6 +783,76 @@ program
     },
   );
 
+program
+  .command('account-offers <accountId>')
+  .description('Inspect open offers for a Stellar account and summarize trading pairs')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-l, --limit <count>', 'Maximum offers to inspect', '20')
+  .option('--cursor <cursor>', 'Horizon pagination cursor')
+  .option('--order <order>', 'Horizon order: asc or desc', 'desc')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      accountId: string,
+      options: {
+        horizon: string;
+        limit: string;
+        cursor?: string;
+        order: string;
+        json?: boolean;
+        output?: string;
+      },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(`Inspecting offers for ${accountId}`, !!options.json).start();
+      try {
+        const report = await inspectAccountOffers({
+          horizonUrl: options.horizon,
+          accountId,
+          limit: Number.parseInt(options.limit, 10),
+          cursor: options.cursor,
+          order: options.order === 'asc' ? 'asc' : 'desc',
+        });
+        spinner.succeed('Account offers inspection complete.');
+        writeResult(report, options, formatOffersReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('claimable-balance <balanceId>')
+  .description('Inspect a Stellar claimable balance, claimants, and predicates')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (balanceId: string, options: { horizon: string; json?: boolean; output?: string }) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting claimable balance ${balanceId}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await inspectClaimableBalance(options.horizon, balanceId);
+        spinner.succeed('Claimable balance inspection complete.');
+        writeResult(report, options, formatClaimableBalanceReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
 // ---------------------------------------------------------------------------
 // 4. Ledger Header Inspection
 // ---------------------------------------------------------------------------
@@ -1173,6 +1252,177 @@ program
         text += formatTable(rows);
 
         writeResult(result, options, text);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// 5b. Route, effects, and account data inspectors
+// ---------------------------------------------------------------------------
+program
+  .command('account-data <accountId>')
+  .description('Inspect Stellar account data entries with decoded values and byte counts')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('--key <name>', 'Inspect a single data entry key')
+  .option('--prefix <prefix>', 'Filter data entries by key prefix')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      accountId: string,
+      options: { horizon: string; key?: string; prefix?: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting data entries for ${accountId}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await inspectAccountData(
+          options.horizon,
+          accountId,
+          options.key,
+          options.prefix,
+        );
+        spinner.succeed('Account data inspection complete.');
+        writeResult(report, options, formatAccountDataReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('tx-effects <hash>')
+  .description('Fetch and summarize Horizon effects for a Stellar transaction')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-l, --limit <count>', 'Maximum effects to inspect', '20')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      hash: string,
+      options: { horizon: string; limit: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting transaction effects ${hash.slice(0, 12)}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await analyzeTransactionEffects(
+          options.horizon,
+          hash,
+          Number.parseInt(options.limit, 10),
+        );
+        spinner.succeed('Transaction effects inspection complete.');
+        writeResult(report, options, formatEffectsReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('operation-effects <operationId>')
+  .description('Fetch and summarize Horizon effects for a single operation')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-l, --limit <count>', 'Maximum effects to inspect', '20')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      operationId: string,
+      options: { horizon: string; limit: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting operation effects ${operationId}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await inspectOperationEffects(
+          options.horizon,
+          operationId,
+          Number.parseInt(options.limit, 10),
+        );
+        spinner.succeed('Operation effects inspection complete.');
+        writeResult(report, options, formatEffectsReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('path-routes')
+  .description('Inspect Horizon path payment routes for strict-send or strict-receive payments')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('--mode <mode>', 'Route mode: strict-send or strict-receive', 'strict-send')
+  .option('--source-asset <asset>', 'Source asset, XLM/native or CODE:G...', 'XLM')
+  .option('--source-amount <amount>', 'Source amount for strict-send routing')
+  .option('--source-account <accountId>', 'Source account for strict-receive routing')
+  .option('--destination-asset <asset>', 'Destination asset, XLM/native or CODE:G...', 'XLM')
+  .option('--destination-amount <amount>', 'Destination amount for strict-receive routing')
+  .option('--destination-account <accountId>', 'Destination account for strict-send routing')
+  .option('--sort <field>', 'Sort by rate, hops, source, or destination', 'rate')
+  .option('-l, --limit <count>', 'Maximum routes to display', '20')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (options: {
+      horizon: string;
+      mode: string;
+      sourceAsset: string;
+      sourceAmount?: string;
+      sourceAccount?: string;
+      destinationAsset: string;
+      destinationAmount?: string;
+      destinationAccount?: string;
+      sort: string;
+      limit: string;
+      json?: boolean;
+      output?: string;
+    }) => {
+      if (options.json) logger.setJsonMode(true);
+      const mode = options.mode === 'strict-receive' ? 'strict-receive' : 'strict-send';
+      const sort = ['rate', 'hops', 'source', 'destination'].includes(options.sort)
+        ? (options.sort as 'rate' | 'hops' | 'source' | 'destination')
+        : 'rate';
+      const spinner = makeSpinner(`Inspecting ${mode} path routes`, !!options.json).start();
+      try {
+        const report = await inspectPaths({
+          horizonUrl: options.horizon,
+          mode,
+          sourceAsset: options.sourceAsset,
+          sourceAmount: options.sourceAmount,
+          sourceAccount: options.sourceAccount,
+          destinationAsset: options.destinationAsset,
+          destinationAmount: options.destinationAmount,
+          destinationAccount: options.destinationAccount,
+          sort,
+          limit: Number.parseInt(options.limit, 10),
+        });
+        spinner.succeed('Path route inspection complete.');
+        writeResult(report, options, formatPathsReport(report));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
