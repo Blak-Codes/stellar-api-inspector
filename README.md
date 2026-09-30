@@ -13,7 +13,9 @@ A command-line inspection and health-checking tool for Stellar Horizon and Sorob
 - **🔎 Soroban Transaction Inspection**: Inspect execution status, contract events, diagnostic events, resource usage, and fee breakdown for any submitted Soroban transaction.
 - **🧬 Soroban Contract Inspection**: Retrieve contract instance metadata, WASM code hash, ledger footprint, storage counts, and TTL expiration warnings.
 - **📜 Transaction Operation Analysis**: Fetch any Stellar transaction from Horizon and decode each operation into human-readable descriptions, with asset movement summaries and JSON output.
+- **🧾 Sponsorship Audit**: Inspect an account's sponsorship counters and sponsored trustline/signer metadata.
 - **🛡️ Account Auditor**: Detailed structural audits of accounts: analyze thresholds, verify signer weights (multi-sig checks), inspect asset balances, and detect trustline authorization/limit risks.
+- **💧 Liquidity Pool Inspection**: Inspect pool reserves, shares, fee configuration, derived ratios, and optional recent activity.
 - **📈 Market Trade History**: Retrieve recent trades for any Stellar asset pair, display per-trade details, and compute summary statistics (volume, average/high/low price).
 - **📊 Account Offers & Claimable Balances**: Inspect open account offers, grouped trading pairs, and claimable balance predicates.
 - **📜 Operations History**: Fetch Horizon operations, filter by account/type/limit, and normalize common operation details.
@@ -217,25 +219,25 @@ npm run dev -- horizon https://horizon-testnet.stellar.org --json
 
 Endpoints served over plain `http://` report `httpsEnabled: false` with a warning recommending HTTPS. If the TLS handshake cannot be completed (timeout, connection refused, missing certificate), the command still succeeds and surfaces the failure under `tls.error` with a corresponding warning — Horizon endpoint inspection is never blocked by TLS issues.
 
-### Account Offers
-Inspect the active decentralized exchange offers for an account:
+### Sponsorship Audit
+Inspect sponsorship counters and sponsorship metadata visible from an account payload:
 
 ```bash
-npm run dev -- offers G... --limit 50 --order desc
-npm run dev -- offers G... --json
+npm run dev -- sponsorship G...
+npm run dev -- sponsorship G... --json
 ```
 
-The report lists each offer, groups offers by selling/buying asset pair, and summarizes pair counts, total offered amount, and price ranges.
+The report distinguishes reserves sponsored by the account from reserves sponsored for the account and summarizes sponsored trustlines and signers where Horizon exposes that metadata.
 
-### Claimable Balance Inspection
-Inspect a claimable balance and decode supported claimant predicates:
+### Liquidity Pool Inspection
+Inspect a liquidity pool's current state:
 
 ```bash
-npm run dev -- claimable-balance <64-character-balance-id>
-npm run dev -- claimable-balance <64-character-balance-id> --json
+npm run dev -- liquidity-pool <64-character-pool-id>
+npm run dev -- liquidity-pool <64-character-pool-id> --activity --limit 25 --json
 ```
 
-Human-readable output shows the asset, amount, sponsor, ledger metadata, claimants, and predicate descriptions. JSON output preserves the raw predicate structure.
+The report shows pool type, fee basis points, total shares, reserves, reserve shares, reserve ratio, and an approximate spot price. With `--activity`, recent pool trades, operations, and transactions are counted separately.
 
 ### Soroban RPC Inspection
 Verify a Soroban RPC node's health, network configuration, protocol version, and ledger synchronization status:
