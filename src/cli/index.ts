@@ -45,14 +45,11 @@ import {
   validateTransactionHash as validateTxHash,
 } from '../services/transaction-analyzer';
 import {
-  analyzeTransactionEffects,
-  formatAccountDataReport,
-  formatEffectsReport,
-  formatPathsReport,
-  inspectAccountData,
-  inspectOperationEffects,
-  inspectPaths,
-} from '../services/route-effects-data';
+  formatLiquidityPoolReport,
+  formatSponsorshipReport,
+  inspectLiquidityPool,
+  inspectSponsorship,
+} from '../services/sponsorship-liquidity';
 import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import dotenv from 'dotenv';
@@ -2067,73 +2064,22 @@ program
   );
 
 // ---------------------------------------------------------------------------
-// 14. Path, effects, and account-data inspectors
+// 14. Sponsorship and liquidity pool inspectors
 // ---------------------------------------------------------------------------
 program
-  .command('paths')
-  .description('Inspect Horizon strict-send or strict-receive path payment routes')
-  .requiredOption('--mode <mode>', 'strict-send or strict-receive')
-  .option('--source-asset <asset>', 'Source asset, native or CODE:G...')
-  .option('--source-amount <amount>', 'Source amount for strict-send')
-  .option('--source-account <accountId>', 'Source account for strict-receive')
-  .option('--destination-asset <asset>', 'Destination asset, native or CODE:G...')
-  .option('--destination-amount <amount>', 'Destination amount for strict-receive')
-  .option('--destination-account <accountId>', 'Destination account for strict-send')
-  .option('--sort <sort>', 'destination, source, hops, or rate', 'rate')
-  .option('-l, --limit <number>', 'Maximum routes to print', '20')
+  .command('sponsorship <accountId>')
+  .description('Audit current sponsorship counters and sponsored account entries')
   .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
-  .option('-j, --json', 'Output raw JSON')
-  .option('-o, --output <path>', 'Save output to file')
-  .action(async (options) => {
-    if (options.json) logger.setJsonMode(true);
-    const spinner = makeSpinner(`Inspecting ${options.mode} payment paths`, !!options.json).start();
-    try {
-      const mode = options.mode === 'strict-receive' ? 'strict-receive' : 'strict-send';
-      const report = await inspectPaths({
-        horizonUrl: options.horizon,
-        mode,
-        sourceAsset: options.sourceAsset,
-        sourceAmount: options.sourceAmount,
-        sourceAccount: options.sourceAccount,
-        destinationAsset: options.destinationAsset,
-        destinationAmount: options.destinationAmount,
-        destinationAccount: options.destinationAccount,
-        sort: options.sort,
-        limit: Number.parseInt(options.limit, 10),
-      });
-      spinner.succeed(`Path inspection complete — ${report.count} route(s).`);
-      writeResult(report, options, formatPathsReport(report));
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      spinner.fail(message);
-      if (options.json) outputJsonError(message);
-      logger.error(message);
-      process.exit(1);
-    }
-  });
-
-program
-  .command('analyze-effects <hash>')
-  .description('Analyze Horizon effects produced by a transaction')
-  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
-  .option('-l, --limit <number>', 'Maximum effects to retrieve', '50')
   .option('-j, --json', 'Output raw JSON')
   .option('-o, --output <path>', 'Save output to file')
   .action(
-    async (
-      hash: string,
-      options: { horizon: string; limit: string; json?: boolean; output?: string },
-    ) => {
+    async (accountId: string, options: { horizon: string; json?: boolean; output?: string }) => {
       if (options.json) logger.setJsonMode(true);
-      const spinner = makeSpinner(`Analyzing transaction effects`, !!options.json).start();
+      const spinner = makeSpinner(`Auditing sponsorship for ${accountId}`, !!options.json).start();
       try {
-        const report = await analyzeTransactionEffects(
-          options.horizon,
-          hash,
-          Number.parseInt(options.limit, 10),
-        );
-        spinner.succeed(`Effects analysis complete — ${report.summary.count} effect(s).`);
-        writeResult(report, options, formatEffectsReport(report));
+        const report = await inspectSponsorship(options.horizon, accountId);
+        spinner.succeed(`Sponsorship audit complete.`);
+        writeResult(report, options, formatSponsorshipReport(report));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
@@ -2145,63 +2091,35 @@ program
   );
 
 program
-  .command('account-data <accountId>')
-  .description('Inspect and safely decode account data entries')
+  .command('liquidity-pool <poolId>')
+  .description('Inspect a Horizon liquidity pool and optional recent activity')
   .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
-  .option('--key <key>', 'Inspect a specific data key')
-  .option('--prefix <prefix>', 'Filter data keys by prefix')
+  .option('--activity', 'Inspect recent pool trades, operations, and transactions')
+  .option('-l, --limit <number>', 'Recent activity records per collection', '20')
   .option('-j, --json', 'Output raw JSON')
   .option('-o, --output <path>', 'Save output to file')
   .action(
     async (
-      accountId: string,
-      options: { horizon: string; key?: string; prefix?: string; json?: boolean; output?: string },
+      poolId: string,
+      options: {
+        horizon: string;
+        activity?: boolean;
+        limit: string;
+        json?: boolean;
+        output?: string;
+      },
     ) => {
       if (options.json) logger.setJsonMode(true);
-      const spinner = makeSpinner(`Inspecting account data entries`, !!options.json).start();
+      const spinner = makeSpinner(`Inspecting liquidity pool ${poolId}`, !!options.json).start();
       try {
-        const report = await inspectAccountData(
+        const report = await inspectLiquidityPool(
           options.horizon,
-          accountId,
-          options.key,
-          options.prefix,
-        );
-        spinner.succeed(`Account data inspection complete — ${report.summary.count} entry(s).`);
-        writeResult(report, options, formatAccountDataReport(report));
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        spinner.fail(message);
-        if (options.json) outputJsonError(message);
-        logger.error(message);
-        process.exit(1);
-      }
-    },
-  );
-
-program
-  .command('operation-effects <operationId>')
-  .description('Inspect Horizon effects produced by a single operation')
-  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
-  .option('-l, --limit <number>', 'Maximum effects to retrieve', '50')
-  .option('-j, --json', 'Output raw JSON')
-  .option('-o, --output <path>', 'Save output to file')
-  .action(
-    async (
-      operationId: string,
-      options: { horizon: string; limit: string; json?: boolean; output?: string },
-    ) => {
-      if (options.json) logger.setJsonMode(true);
-      const spinner = makeSpinner(`Inspecting operation effects`, !!options.json).start();
-      try {
-        const report = await inspectOperationEffects(
-          options.horizon,
-          operationId,
+          poolId,
+          !!options.activity,
           Number.parseInt(options.limit, 10),
         );
-        spinner.succeed(
-          `Operation effects inspection complete — ${report.summary.count} effect(s).`,
-        );
-        writeResult(report, options, formatEffectsReport(report));
+        spinner.succeed(`Liquidity pool inspection complete.`);
+        writeResult(report, options, formatLiquidityPoolReport(report));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
