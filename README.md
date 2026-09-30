@@ -17,6 +17,7 @@ A command-line inspection and health-checking tool for Stellar Horizon and Sorob
 - **🛡️ Account Auditor**: Detailed structural audits of accounts: analyze thresholds, verify signer weights (multi-sig checks), inspect asset balances, and detect trustline authorization/limit risks.
 - **💧 Liquidity Pool Inspection**: Inspect pool reserves, shares, fee configuration, derived ratios, and optional recent activity.
 - **📈 Market Trade History**: Retrieve recent trades for any Stellar asset pair, display per-trade details, and compute summary statistics (volume, average/high/low price).
+- **📊 Account Offers & Claimable Balances**: Inspect open account offers, grouped trading pairs, and claimable balance predicates.
 - **📜 Operations History**: Fetch Horizon operations, filter by account/type/limit, and normalize common operation details.
 - **🧭 Interactive Mode**: Launch a guided menu when the CLI is run without arguments.
 - **⏱️ Rate Limit Tracker**: Read and analyze HTTP headers (`X-Ratelimit-Limit`, `X-Ratelimit-Remaining`, `X-Ratelimit-Reset`) to help avoid rate limits in production.
