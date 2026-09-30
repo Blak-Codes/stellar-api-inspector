@@ -441,6 +441,18 @@ Account audits include a trustline health section for non-native assets:
 npm run dev -- account G... --horizon https://horizon-testnet.stellar.org --json
 ```
 
+### Account Merge Safety Audit
+Run a read-only preflight on the source and destination accounts before preparing a merge:
+
+```bash
+npm run dev -- account-merge-audit G_SOURCE G_DESTINATION
+npm run dev -- account-merge-audit G_SOURCE G_DESTINATION --history-depth 50 --json
+```
+
+The report retrieves both accounts and checks source XLM balance and liabilities, trustlines, offers, signers, data entries, subentry counts, and sponsorship counters. It classifies the result as `ready`, `requires-cleanup`, `destination-unavailable`, or `insufficient-information`; every non-ready result includes findings and suggested actions. JSON includes normalized counts and findings plus the raw Horizon account payload and raw offer records used by the checks.
+
+This is a snapshot-based preflight, not a guarantee that a merge will execute: account state can change after inspection, Horizon history may be incomplete, and sponsorship counters do not enumerate every current ledger relationship. `--history-depth` optionally includes up to 200 recent source operations as supporting evidence, but historical operations do not establish current state. The command only performs GET requests; it never builds, signs, or submits a transaction.
+
 ### Soroban Contract Inspection
 
 Inspect contract ledger entries exposed by Soroban RPC:
