@@ -71,6 +71,8 @@ import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import { inspectContractEnvMeta } from '../services/contract-env-meta';
 import { formatContractEnvMetaReport } from '../output/contract-env-meta-report';
+import { verifyTransactionSignatures } from '../services/signature-verifier';
+import { verifyWasmIntegrity } from '../services/wasm-integrity';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -2786,6 +2788,257 @@ program
         );
         spinner.succeed(`Liquidity pool inspection complete.`);
         writeResult(report, options, formatLiquidityPoolReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// 15. Transaction Signature Verifier
+// ---------------------------------------------------------------------------
+program
+  .command('verify-signatures <xdr>')
+  .description(
+    'Offline verification of every signature in a Stellar TransactionEnvelope XDR. ' +
+      'Reconstructs the exact signing payload for the supplied network and checks each decorated signature.',
+  )
+  .option('-n, --network <passphrase>', 'Network passphrase or alias (testnet, public, futurenet)', 'testnet')
+  .option(
+    '-s, --signers <accounts>',
+    'Comma-separated list of G-address public keys to resolve signature hints',
+    '',
+  )
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      envelopeXdr: string,
+      options: { network: string; signers: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+
+      const knownSigners = options.signers
+        ? options.signers
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+
+      const result = verifyTransactionSignatures(envelopeXdr, options.network, knownSigners);
+
+      if (!result.result) {
+        const msg = result.error || 'Failed to verify transaction signatures';
+        if (options.json) outputJsonError(msg);
+        logger.error(msg);
+        process.exit(1);
+        return;
+      }
+
+      const verification = result.result;
+
+      let text = `\n${chalk.bold.green('=== Transaction Signature Verification ===')}\n\n`;
+      text += formatTable([
+        ['Field', 'Value'],
+        ['Envelope Type', verification.envelopeType],
+        ['Network Passphrase', verification.networkPassphrase],
+        ['Transaction Hash', verification.transactionHash],
+        ...(verification.innerTransactionHash
+          ? ([['Inner Transaction Hash', verification.innerTransactionHash]] as string[][])
+          : []),
+        ['Total Signatures', String(verification.signatures.length + verification.innerSignatures.length)],
+        [
+          'Valid',
+          verification.validCount > 0
+            ? chalk.green(String(verification.validCount))
+            : String(verification.validCount),
+        ],
+        [
+          'Invalid',
+          verification.invalidCount > 0
+            ? chalk.red(String(verification.invalidCount))
+            : String(verification.invalidCount),
+        ],
+        [
+          'Unknown Signer',
+          verification.unknownCount > 0
+            ? chalk.yellow(String(verification.unknownCount))
+            : String(verification.unknownCount),
+        ],
+        [
+          'Overall Result',
+          verification.allValid
+            ? chalk.green('ALL VALID ✓')
+            : verification.invalidCount > 0
+              ? chalk.red('INVALID ✗')
+              : chalk.yellow('UNRESOLVED ⚠'),
+        ],
+      ]);
+
+      const allSigSections: Array<{ label: string; sigs: typeof verification.signatures }> = [
+        { label: verification.envelopeType === 'fee_bump' ? 'Outer Signatures' : 'Signatures', sigs: verification.signatures },
+      ];
+      if (verification.innerSignatures.length > 0) {
+        allSigSections.push({ label: 'Inner Transaction Signatures', sigs: verification.innerSignatures });
+      }
+
+      for (const section of allSigSections) {
+        text += `\n${chalk.bold.cyan(`--- ${section.label} (${section.sigs.length}) ---`)}\n`;
+        if (section.sigs.length === 0) {
+          text += chalk.gray('  No signatures.\n');
+        } else {
+          const rows: string[][] = [['#', 'Hint', 'Signer', 'Status', 'Note']];
+          for (const sig of section.sigs) {
+            const statusLabel =
+              sig.status === 'valid'
+                ? chalk.green('VALID ✓')
+                : sig.status === 'invalid'
+                  ? chalk.red('INVALID ✗')
+                  : chalk.yellow('UNKNOWN ⚠');
+            rows.push([
+              String(sig.index + 1),
+              sig.hint,
+              sig.signerPublicKey
+                ? sig.signerPublicKey.slice(0, 12) + '...'
+                : chalk.gray('unresolved'),
+              statusLabel,
+              sig.description.length > 60 ? sig.description.slice(0, 60) + '…' : sig.description,
+            ]);
+          }
+          text += formatTable(rows);
+        }
+      }
+
+      if (verification.diagnostics.length > 0) {
+        text += `\n${chalk.bold.yellow('--- Diagnostics ---')}\n`;
+        for (const diag of verification.diagnostics) {
+          text += `${chalk.yellow('⚠')} ${diag}\n`;
+        }
+      }
+
+      writeResult(verification, options, text);
+
+      // Exit non-zero when signatures are provably invalid so the command
+      // can be used in shell pipelines.
+      if (verification.invalidCount > 0) {
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// 16. Soroban Contract WASM Integrity Verifier
+// ---------------------------------------------------------------------------
+program
+  .command('wasm-integrity <contractId>')
+  .description(
+    'Verify the integrity of a deployed Soroban contract WASM artifact. ' +
+      'Resolves the deployed WASM hash, retrieves the bytecode, computes a SHA-256, ' +
+      'and optionally compares it against a local .wasm file.',
+  )
+  .option('--rpc <url>', 'Soroban RPC endpoint', 'https://soroban-testnet.stellar.org')
+  .option('--wasm <path>', 'Local .wasm file to compare against the deployed bytecode')
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      contractId: string,
+      options: { rpc: string; wasm?: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+
+      const spinner = makeSpinner(
+        `Verifying WASM integrity for contract ${contractId}...`,
+        !!options.json,
+      ).start();
+
+      try {
+        const verification = await verifyWasmIntegrity({
+          contractId,
+          rpcUrl: options.rpc,
+          localWasmPath: options.wasm,
+        });
+
+        if (verification.status === 'error') {
+          spinner.fail(verification.summary);
+          if (options.json) outputJsonError(verification.summary);
+          logger.error(verification.summary);
+          process.exit(1);
+          return;
+        }
+
+        spinner.succeed('WASM integrity check complete.');
+
+        let text = `\n${chalk.bold.green('=== Soroban Contract WASM Integrity ===')}\n\n`;
+
+        const rows: string[][] = [
+          ['Field', 'Value'],
+          ['Contract ID', verification.contractId],
+          ['RPC URL', verification.rpcUrl],
+          ['Deployed WASM Hash', verification.deployedWasmHash ?? 'N/A'],
+          [
+            'Deployed Bytecode SHA-256',
+            verification.deployedBytecodeHash ?? 'N/A',
+          ],
+          [
+            'Deployed WASM Size',
+            verification.deployedWasmSizeBytes !== null
+              ? formatBytes(verification.deployedWasmSizeBytes)
+              : 'N/A',
+          ],
+        ];
+
+        if (verification.localWasmPath) {
+          rows.push(['Local WASM File', verification.localWasmPath]);
+          rows.push([
+            'Local Bytecode SHA-256',
+            verification.localBytecodeHash ?? 'N/A',
+          ]);
+          rows.push([
+            'Local WASM Size',
+            verification.localWasmSizeBytes !== null
+              ? formatBytes(verification.localWasmSizeBytes)
+              : 'N/A',
+          ]);
+          rows.push([
+            'Hashes Match',
+            verification.hashesMatch === true
+              ? chalk.green('YES ✓')
+              : verification.hashesMatch === false
+                ? chalk.red('NO ✗')
+                : 'N/A',
+          ]);
+        }
+
+        text += formatTable(rows);
+
+        // Summary line
+        text += '\n';
+        if (verification.status === 'match') {
+          text += chalk.green(`✓ ${verification.summary}\n`);
+        } else if (verification.status === 'mismatch') {
+          text += chalk.red(`✗ ${verification.summary}\n`);
+        } else {
+          text += `${verification.summary}\n`;
+        }
+
+        if (verification.warnings.length > 0) {
+          text += `\n${chalk.bold.yellow('--- Warnings ---')}\n`;
+          for (const warning of verification.warnings) {
+            text += `${chalk.yellow('⚠')} ${warning}\n`;
+          }
+        }
+
+        writeResult(verification, options, text);
+
+        // Exit non-zero on hash mismatch so the command works in CI pipelines.
+        if (verification.status === 'mismatch') {
+          process.exit(1);
+        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
