@@ -58,12 +58,21 @@ import {
   inspectLiquidityPool,
   inspectSponsorship,
 } from '../services/sponsorship-liquidity';
+import {
+  analyzeTransactionEffects,
+  formatAccountDataReport,
+  formatEffectsReport,
+  formatPathsReport,
+  inspectAccountData,
+  inspectOperationEffects,
+  inspectPaths,
+} from '../services/route-effects-data';
 import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import { inspectContractEnvMeta } from '../services/contract-env-meta';
 import { formatContractEnvMetaReport } from '../output/contract-env-meta-report';
-import { analyzeAccountReserve } from '../services/account-reserve';
-import { formatAccountReserveReport } from '../output/account-reserve-report';
+import { verifyTransactionSignatures } from '../services/signature-verifier';
+import { verifyWasmIntegrity } from '../services/wasm-integrity';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -774,6 +783,76 @@ program
     },
   );
 
+program
+  .command('account-offers <accountId>')
+  .description('Inspect open offers for a Stellar account and summarize trading pairs')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-l, --limit <count>', 'Maximum offers to inspect', '20')
+  .option('--cursor <cursor>', 'Horizon pagination cursor')
+  .option('--order <order>', 'Horizon order: asc or desc', 'desc')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      accountId: string,
+      options: {
+        horizon: string;
+        limit: string;
+        cursor?: string;
+        order: string;
+        json?: boolean;
+        output?: string;
+      },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(`Inspecting offers for ${accountId}`, !!options.json).start();
+      try {
+        const report = await inspectAccountOffers({
+          horizonUrl: options.horizon,
+          accountId,
+          limit: Number.parseInt(options.limit, 10),
+          cursor: options.cursor,
+          order: options.order === 'asc' ? 'asc' : 'desc',
+        });
+        spinner.succeed('Account offers inspection complete.');
+        writeResult(report, options, formatOffersReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('claimable-balance <balanceId>')
+  .description('Inspect a Stellar claimable balance, claimants, and predicates')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (balanceId: string, options: { horizon: string; json?: boolean; output?: string }) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting claimable balance ${balanceId}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await inspectClaimableBalance(options.horizon, balanceId);
+        spinner.succeed('Claimable balance inspection complete.');
+        writeResult(report, options, formatClaimableBalanceReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
 // ---------------------------------------------------------------------------
 // 4. Ledger Header Inspection
 // ---------------------------------------------------------------------------
@@ -1173,6 +1252,177 @@ program
         text += formatTable(rows);
 
         writeResult(result, options, text);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// 5b. Route, effects, and account data inspectors
+// ---------------------------------------------------------------------------
+program
+  .command('account-data <accountId>')
+  .description('Inspect Stellar account data entries with decoded values and byte counts')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('--key <name>', 'Inspect a single data entry key')
+  .option('--prefix <prefix>', 'Filter data entries by key prefix')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      accountId: string,
+      options: { horizon: string; key?: string; prefix?: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting data entries for ${accountId}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await inspectAccountData(
+          options.horizon,
+          accountId,
+          options.key,
+          options.prefix,
+        );
+        spinner.succeed('Account data inspection complete.');
+        writeResult(report, options, formatAccountDataReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('tx-effects <hash>')
+  .description('Fetch and summarize Horizon effects for a Stellar transaction')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-l, --limit <count>', 'Maximum effects to inspect', '20')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      hash: string,
+      options: { horizon: string; limit: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting transaction effects ${hash.slice(0, 12)}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await analyzeTransactionEffects(
+          options.horizon,
+          hash,
+          Number.parseInt(options.limit, 10),
+        );
+        spinner.succeed('Transaction effects inspection complete.');
+        writeResult(report, options, formatEffectsReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('operation-effects <operationId>')
+  .description('Fetch and summarize Horizon effects for a single operation')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-l, --limit <count>', 'Maximum effects to inspect', '20')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      operationId: string,
+      options: { horizon: string; limit: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+      const spinner = makeSpinner(
+        `Inspecting operation effects ${operationId}`,
+        !!options.json,
+      ).start();
+      try {
+        const report = await inspectOperationEffects(
+          options.horizon,
+          operationId,
+          Number.parseInt(options.limit, 10),
+        );
+        spinner.succeed('Operation effects inspection complete.');
+        writeResult(report, options, formatEffectsReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+program
+  .command('path-routes')
+  .description('Inspect Horizon path payment routes for strict-send or strict-receive payments')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('--mode <mode>', 'Route mode: strict-send or strict-receive', 'strict-send')
+  .option('--source-asset <asset>', 'Source asset, XLM/native or CODE:G...', 'XLM')
+  .option('--source-amount <amount>', 'Source amount for strict-send routing')
+  .option('--source-account <accountId>', 'Source account for strict-receive routing')
+  .option('--destination-asset <asset>', 'Destination asset, XLM/native or CODE:G...', 'XLM')
+  .option('--destination-amount <amount>', 'Destination amount for strict-receive routing')
+  .option('--destination-account <accountId>', 'Destination account for strict-send routing')
+  .option('--sort <field>', 'Sort by rate, hops, source, or destination', 'rate')
+  .option('-l, --limit <count>', 'Maximum routes to display', '20')
+  .option('-j, --json', 'Output raw JSON')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (options: {
+      horizon: string;
+      mode: string;
+      sourceAsset: string;
+      sourceAmount?: string;
+      sourceAccount?: string;
+      destinationAsset: string;
+      destinationAmount?: string;
+      destinationAccount?: string;
+      sort: string;
+      limit: string;
+      json?: boolean;
+      output?: string;
+    }) => {
+      if (options.json) logger.setJsonMode(true);
+      const mode = options.mode === 'strict-receive' ? 'strict-receive' : 'strict-send';
+      const sort = ['rate', 'hops', 'source', 'destination'].includes(options.sort)
+        ? (options.sort as 'rate' | 'hops' | 'source' | 'destination')
+        : 'rate';
+      const spinner = makeSpinner(`Inspecting ${mode} path routes`, !!options.json).start();
+      try {
+        const report = await inspectPaths({
+          horizonUrl: options.horizon,
+          mode,
+          sourceAsset: options.sourceAsset,
+          sourceAmount: options.sourceAmount,
+          sourceAccount: options.sourceAccount,
+          destinationAsset: options.destinationAsset,
+          destinationAmount: options.destinationAmount,
+          destinationAccount: options.destinationAccount,
+          sort,
+          limit: Number.parseInt(options.limit, 10),
+        });
+        spinner.succeed('Path route inspection complete.');
+        writeResult(report, options, formatPathsReport(report));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
@@ -2549,48 +2799,253 @@ program
   );
 
 // ---------------------------------------------------------------------------
-// ISSUE-043: Account Reserve & Liability Analysis
+// 15. Transaction Signature Verifier
 // ---------------------------------------------------------------------------
 program
-  .command('account-reserve <accountId>')
+  .command('verify-signatures <xdr>')
   .description(
-    'Analyze a Stellar account reserve requirements, liabilities, and spendable XLM balance',
+    'Offline verification of every signature in a Stellar TransactionEnvelope XDR. ' +
+      'Reconstructs the exact signing payload for the supplied network and checks each decorated signature.',
   )
-  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-n, --network <passphrase>', 'Network passphrase or alias (testnet, public, futurenet)', 'testnet')
+  .option(
+    '-s, --signers <accounts>',
+    'Comma-separated list of G-address public keys to resolve signature hints',
+    '',
+  )
   .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
   .option('-o, --output <path>', 'Save output to file')
-  .option('-v, --verbose', 'Verbose mode')
   .action(
     async (
-      accountId: string,
-      options: { horizon: string; json?: boolean; output?: string; verbose?: boolean },
+      envelopeXdr: string,
+      options: { network: string; signers: string; json?: boolean; output?: string },
     ) => {
-      if (options.verbose) logger.setLevel('debug');
       if (options.json) logger.setJsonMode(true);
 
-      const horizonValidation = validateHorizonUrl(options.horizon);
-      if (!horizonValidation.valid) {
-        if (options.json) outputJsonError(horizonValidation.error!);
-        logger.error(horizonValidation.error!);
+      const knownSigners = options.signers
+        ? options.signers
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+
+      const result = verifyTransactionSignatures(envelopeXdr, options.network, knownSigners);
+
+      if (!result.result) {
+        const msg = result.error || 'Failed to verify transaction signatures';
+        if (options.json) outputJsonError(msg);
+        logger.error(msg);
         process.exit(1);
+        return;
       }
 
+      const verification = result.result;
+
+      let text = `\n${chalk.bold.green('=== Transaction Signature Verification ===')}\n\n`;
+      text += formatTable([
+        ['Field', 'Value'],
+        ['Envelope Type', verification.envelopeType],
+        ['Network Passphrase', verification.networkPassphrase],
+        ['Transaction Hash', verification.transactionHash],
+        ...(verification.innerTransactionHash
+          ? ([['Inner Transaction Hash', verification.innerTransactionHash]] as string[][])
+          : []),
+        ['Total Signatures', String(verification.signatures.length + verification.innerSignatures.length)],
+        [
+          'Valid',
+          verification.validCount > 0
+            ? chalk.green(String(verification.validCount))
+            : String(verification.validCount),
+        ],
+        [
+          'Invalid',
+          verification.invalidCount > 0
+            ? chalk.red(String(verification.invalidCount))
+            : String(verification.invalidCount),
+        ],
+        [
+          'Unknown Signer',
+          verification.unknownCount > 0
+            ? chalk.yellow(String(verification.unknownCount))
+            : String(verification.unknownCount),
+        ],
+        [
+          'Overall Result',
+          verification.allValid
+            ? chalk.green('ALL VALID ✓')
+            : verification.invalidCount > 0
+              ? chalk.red('INVALID ✗')
+              : chalk.yellow('UNRESOLVED ⚠'),
+        ],
+      ]);
+
+      const allSigSections: Array<{ label: string; sigs: typeof verification.signatures }> = [
+        { label: verification.envelopeType === 'fee_bump' ? 'Outer Signatures' : 'Signatures', sigs: verification.signatures },
+      ];
+      if (verification.innerSignatures.length > 0) {
+        allSigSections.push({ label: 'Inner Transaction Signatures', sigs: verification.innerSignatures });
+      }
+
+      for (const section of allSigSections) {
+        text += `\n${chalk.bold.cyan(`--- ${section.label} (${section.sigs.length}) ---`)}\n`;
+        if (section.sigs.length === 0) {
+          text += chalk.gray('  No signatures.\n');
+        } else {
+          const rows: string[][] = [['#', 'Hint', 'Signer', 'Status', 'Note']];
+          for (const sig of section.sigs) {
+            const statusLabel =
+              sig.status === 'valid'
+                ? chalk.green('VALID ✓')
+                : sig.status === 'invalid'
+                  ? chalk.red('INVALID ✗')
+                  : chalk.yellow('UNKNOWN ⚠');
+            rows.push([
+              String(sig.index + 1),
+              sig.hint,
+              sig.signerPublicKey
+                ? sig.signerPublicKey.slice(0, 12) + '...'
+                : chalk.gray('unresolved'),
+              statusLabel,
+              sig.description.length > 60 ? sig.description.slice(0, 60) + '…' : sig.description,
+            ]);
+          }
+          text += formatTable(rows);
+        }
+      }
+
+      if (verification.diagnostics.length > 0) {
+        text += `\n${chalk.bold.yellow('--- Diagnostics ---')}\n`;
+        for (const diag of verification.diagnostics) {
+          text += `${chalk.yellow('⚠')} ${diag}\n`;
+        }
+      }
+
+      writeResult(verification, options, text);
+
+      // Exit non-zero when signatures are provably invalid so the command
+      // can be used in shell pipelines.
+      if (verification.invalidCount > 0) {
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// 16. Soroban Contract WASM Integrity Verifier
+// ---------------------------------------------------------------------------
+program
+  .command('wasm-integrity <contractId>')
+  .description(
+    'Verify the integrity of a deployed Soroban contract WASM artifact. ' +
+      'Resolves the deployed WASM hash, retrieves the bytecode, computes a SHA-256, ' +
+      'and optionally compares it against a local .wasm file.',
+  )
+  .option('--rpc <url>', 'Soroban RPC endpoint', 'https://soroban-testnet.stellar.org')
+  .option('--wasm <path>', 'Local .wasm file to compare against the deployed bytecode')
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (
+      contractId: string,
+      options: { rpc: string; wasm?: string; json?: boolean; output?: string },
+    ) => {
+      if (options.json) logger.setJsonMode(true);
+
       const spinner = makeSpinner(
-        `Analyzing reserves for account ${accountId.slice(0, 8)}...`,
+        `Verifying WASM integrity for contract ${contractId}...`,
         !!options.json,
       ).start();
 
-      const result = await analyzeAccountReserve(options.horizon, accountId);
+      try {
+        const verification = await verifyWasmIntegrity({
+          contractId,
+          rpcUrl: options.rpc,
+          localWasmPath: options.wasm,
+        });
 
-      if (!result) {
-        spinner.fail('Failed to load account from Horizon. Ensure the account ID is valid.');
-        if (options.json)
-          outputJsonError('Failed to load account from Horizon. Ensure the account ID is valid.');
+        if (verification.status === 'error') {
+          spinner.fail(verification.summary);
+          if (options.json) outputJsonError(verification.summary);
+          logger.error(verification.summary);
+          process.exit(1);
+          return;
+        }
+
+        spinner.succeed('WASM integrity check complete.');
+
+        let text = `\n${chalk.bold.green('=== Soroban Contract WASM Integrity ===')}\n\n`;
+
+        const rows: string[][] = [
+          ['Field', 'Value'],
+          ['Contract ID', verification.contractId],
+          ['RPC URL', verification.rpcUrl],
+          ['Deployed WASM Hash', verification.deployedWasmHash ?? 'N/A'],
+          [
+            'Deployed Bytecode SHA-256',
+            verification.deployedBytecodeHash ?? 'N/A',
+          ],
+          [
+            'Deployed WASM Size',
+            verification.deployedWasmSizeBytes !== null
+              ? formatBytes(verification.deployedWasmSizeBytes)
+              : 'N/A',
+          ],
+        ];
+
+        if (verification.localWasmPath) {
+          rows.push(['Local WASM File', verification.localWasmPath]);
+          rows.push([
+            'Local Bytecode SHA-256',
+            verification.localBytecodeHash ?? 'N/A',
+          ]);
+          rows.push([
+            'Local WASM Size',
+            verification.localWasmSizeBytes !== null
+              ? formatBytes(verification.localWasmSizeBytes)
+              : 'N/A',
+          ]);
+          rows.push([
+            'Hashes Match',
+            verification.hashesMatch === true
+              ? chalk.green('YES ✓')
+              : verification.hashesMatch === false
+                ? chalk.red('NO ✗')
+                : 'N/A',
+          ]);
+        }
+
+        text += formatTable(rows);
+
+        // Summary line
+        text += '\n';
+        if (verification.status === 'match') {
+          text += chalk.green(`✓ ${verification.summary}\n`);
+        } else if (verification.status === 'mismatch') {
+          text += chalk.red(`✗ ${verification.summary}\n`);
+        } else {
+          text += `${verification.summary}\n`;
+        }
+
+        if (verification.warnings.length > 0) {
+          text += `\n${chalk.bold.yellow('--- Warnings ---')}\n`;
+          for (const warning of verification.warnings) {
+            text += `${chalk.yellow('⚠')} ${warning}\n`;
+          }
+        }
+
+        writeResult(verification, options, text);
+
+        // Exit non-zero on hash mismatch so the command works in CI pipelines.
+        if (verification.status === 'mismatch') {
+          process.exit(1);
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
         process.exit(1);
       }
-
-      spinner.succeed('Account reserve analysis complete.');
-      writeResult(result, options, formatAccountReserveReport(result));
     },
   );
 
