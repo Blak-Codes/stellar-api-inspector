@@ -19,6 +19,7 @@ import { fetchOrderBook } from '../inspectors/orderbook';
 import { runHealthDashboard } from '../inspectors/health';
 import { parseAsset } from '../utils/assets';
 import { decodeTransactionEnvelope } from '../inspectors/decode';
+import { analyzeFeeBumpTransaction } from '../inspectors/fee-bump';
 import { validateTxTestConfig, runTxTest } from '../inspectors/tx-test';
 import {
   formatBytes,
@@ -1346,6 +1347,99 @@ program
     text += formatTable(sigRows);
 
     writeResult(decoded, options, text);
+  });
+
+program
+  .command('fee-bump <xdr>')
+  .description('Analyze a transaction or fee-bump envelope XDR offline')
+  .option('-n, --network <passphrase>', 'Explicit network passphrase or alias (testnet, public)')
+  .option('-j, --json', 'Output normalized JSON, including the original XDR')
+  .option('-o, --output <path>', 'Save output to file')
+  .action((xdr: string, options: { network?: string; json?: boolean; output?: string }) => {
+    if (options.json) logger.setJsonMode(true);
+
+    const result = analyzeFeeBumpTransaction(xdr, options.network);
+    if (!result.analysis) {
+      if (options.json) outputJsonError(result.error);
+      logger.error(result.error);
+      process.exit(1);
+      return;
+    }
+
+    const analysis = result.analysis;
+    const outer = analysis.normalized.outer;
+    const inner = analysis.normalized.inner;
+    let text = `\n${chalk.bold.green('=== Transaction Envelope Analysis ===')}\n\n`;
+    text += formatTable([
+      ['Field', 'Value'],
+      [
+        'Envelope type',
+        analysis.envelopeType === 'fee_bump' ? 'Fee-bump transaction' : 'Regular transaction',
+      ],
+      ['Network context', analysis.networkPassphrase ?? 'Not supplied'],
+      ['Raw XDR preserved', 'Yes'],
+    ]);
+
+    if (analysis.envelopeType === 'fee_bump' && inner && analysis.feeRelationship) {
+      const relationship = analysis.feeRelationship;
+      text += `\n${chalk.bold.cyan('--- Outer Fee-Bump Transaction ---')}\n`;
+      text += formatTable([
+        ['Field', 'Value'],
+        ['Fee source account', String(outer.feeSource)],
+        ['Outer fee', `${relationship.outerFee} stroops`],
+        ['Outer signatures', String(analysis.outerSignatures.length)],
+        ['Fee-bump hash', String(outer.hash ?? 'Unavailable without --network')],
+      ]);
+      text += `\n${chalk.bold.cyan('--- Inner Transaction ---')}\n`;
+      text += formatTable([
+        ['Field', 'Value'],
+        ['Source account', String(inner.sourceAccount)],
+        ['Sequence', String(inner.sequence)],
+        ['Inner fee', `${relationship.innerFee} stroops`],
+        ['Operation count', String(inner.operationCount)],
+        ['Inner transaction hash', String(inner.hash ?? 'Unavailable without --network')],
+        [
+          'Effective maximum fee per operation',
+          relationship.effectiveMaximumFeePerOperation === null
+            ? 'Unavailable (no operations)'
+            : `${relationship.effectiveMaximumFeePerOperation} stroops`,
+        ],
+        ['Outer fee above inner fee', `${relationship.difference} stroops`],
+        ['Preconditions', JSON.stringify(inner.preconditions)],
+      ]);
+      text += `\n${chalk.bold.cyan(`--- Inner Operations (${inner.operations instanceof Array ? inner.operations.length : 0}) ---`)}\n`;
+      for (const operation of (inner.operations as Array<Record<string, unknown>>) || []) {
+        text += `${operation.index !== undefined ? `#${Number(operation.index) + 1} ` : ''}${String(operation.type)}${operation.source ? ` (source ${String(operation.source)})` : ''}\n`;
+      }
+      text += `\n${chalk.bold.cyan('--- Signatures ---')}\n`;
+      for (const [label, signatures] of [
+        ['Outer', analysis.outerSignatures],
+        ['Inner', analysis.innerSignatures],
+      ] as const) {
+        text += `${label} signatures (${signatures.length}):\n`;
+        for (const signature of signatures) {
+          text += `  #${signature.index + 1} hint=${signature.hint} signer=${signature.signerIdentity ?? 'unresolved'}\n`;
+        }
+      }
+      text += `\nDuplicate resolved signers: ${analysis.duplicateSigners.join(', ') || 'None'}\n`;
+      if (analysis.diagnostics.length > 0) {
+        text += `\n${chalk.yellow('Diagnostics:')} ${analysis.diagnostics.join(' ')}\n`;
+      }
+    } else {
+      text += `\n${chalk.bold.cyan('--- Transaction ---')}\n`;
+      text += formatTable([
+        ['Field', 'Value'],
+        ['Source account', String(outer.sourceAccount)],
+        ['Sequence', String(outer.sequence)],
+        ['Fee', `${String(outer.fee)} stroops`],
+        ['Operation count', String(outer.operationCount)],
+        ['Preconditions', JSON.stringify(outer.preconditions)],
+        ['Signatures', String(analysis.outerSignatures.length)],
+      ]);
+      for (const diagnostic of analysis.diagnostics) text += `\n${chalk.yellow(diagnostic)}\n`;
+    }
+
+    writeResult(analysis, options, text);
   });
 
 // ---------------------------------------------------------------------------
