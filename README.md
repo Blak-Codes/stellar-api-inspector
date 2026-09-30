@@ -287,6 +287,27 @@ npm run dev -- soroban https://soroban-testnet.stellar.org --verbose
 }
 ```
 
+### Soroban RPC Version Information
+
+Retrieve a node's implementation and software build metadata through the read-only `getVersionInfo` RPC method:
+
+```bash
+npm run dev -- soroban-version https://soroban-testnet.stellar.org
+```
+
+The report normalizes implementation, server version, build, commit/revision, protocol version, and supported RPC version information when provided. Missing fields are shown as unavailable; the command does not infer metadata from the endpoint URL. It also includes the endpoint URL, request latency, and retrieval timestamp. The original JSON-RPC response is retained in JSON output as `rawResponse`.
+
+Compare two nodes with `--compare`:
+
+```bash
+npm run dev -- soroban-version https://rpc-a.example.com --compare https://rpc-b.example.com
+npm run dev -- soroban-version https://rpc-a.example.com --compare https://rpc-b.example.com --json
+```
+
+The comparison lists differences in implementation, server/build versions, revision, protocol version, and supported RPC versions. It reports whether the available software metadata matches; protocol or build differences are descriptive only and are not compatibility guarantees.
+
+Responses are classified as `available`, `partially-available`, `unsupported` (the method is not implemented), `unreachable`, or `malformed`. Unsupported and partial responses still produce a diagnostic report; unreachable and malformed responses return a non-zero exit code. The command sends only `getVersionInfo` requests and performs no state-changing operations.
+
 ### Soroban RPC Capabilities Inspection
 
 Inspect a Soroban RPC endpoint to discover supported methods, server information, and full capability details:

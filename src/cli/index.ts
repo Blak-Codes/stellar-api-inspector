@@ -12,6 +12,11 @@ import {
 } from '../inspectors/horizon';
 import { inspectAccountFlags } from '../inspectors/flags';
 import { inspectSoroban, validateSorobanUrl } from '../inspectors/soroban';
+import {
+  compareSorobanVersions,
+  inspectSorobanVersion,
+  SorobanVersionMetadata,
+} from '../inspectors/soroban-version';
 import { inspectRpcCapabilities, validateRpcUrl } from '../inspectors/rpc-capabilities';
 import { formatContractInspectionReport } from '../output/contract-report';
 import { formatAccountMergeAudit } from '../output/account-merge-audit';
@@ -359,6 +364,103 @@ program
     text += formatTable(rows);
 
     writeResult(info, options, text);
+  });
+
+// ---------------------------------------------------------------------------
+// 2a. Soroban RPC Version Inspector
+// ---------------------------------------------------------------------------
+program
+  .command('soroban-version <url>')
+  .description('Inspect Soroban RPC implementation and version metadata')
+  .option('--compare <url>', 'Compare version metadata with a second Soroban RPC endpoint')
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(async (url: string, options: { compare?: string; json?: boolean; output?: string }) => {
+    if (options.json) logger.setJsonMode(true);
+
+    for (const candidate of [url, options.compare].filter((value): value is string => !!value)) {
+      const validation = validateSorobanUrl(candidate);
+      if (!validation.valid) {
+        if (options.json) outputJsonError(validation.error!);
+        logger.error(validation.error!);
+        process.exit(1);
+      }
+    }
+
+    const spinner = makeSpinner('Querying Soroban RPC version information', !!options.json).start();
+    const [first, second] = await Promise.all([
+      inspectSorobanVersion(url),
+      options.compare ? inspectSorobanVersion(options.compare) : Promise.resolve(undefined),
+    ]);
+    const comparison = second ? compareSorobanVersions(first, second) : undefined;
+    const outputData = comparison ? { nodes: [first, second], comparison } : first;
+    const unavailable = [first, second].some(
+      (node) => node?.status === 'unreachable' || node?.status === 'malformed',
+    );
+
+    if (unavailable) {
+      spinner.fail('One or more Soroban RPC version requests failed');
+    } else {
+      spinner.succeed('Soroban RPC version inspection complete');
+    }
+
+    const metadataRows = (metadata: SorobanVersionMetadata): string[][] => [
+      ['Implementation', metadata.implementation || 'Unavailable'],
+      ['Server Version', metadata.serverVersion || 'Unavailable'],
+      ['Build Version', metadata.buildVersion || 'Unavailable'],
+      ['Commit / Revision', metadata.revision || 'Unavailable'],
+      [
+        'Protocol Version',
+        metadata.protocolVersion != null ? String(metadata.protocolVersion) : 'Unavailable',
+      ],
+      [
+        'Supported RPC Versions',
+        metadata.supportedRpcVersions != null
+          ? typeof metadata.supportedRpcVersions === 'string'
+            ? metadata.supportedRpcVersions
+            : JSON.stringify(metadata.supportedRpcVersions)
+          : 'Unavailable',
+      ],
+    ];
+    const renderNode = (node: NonNullable<typeof first>, label?: string): string => {
+      const heading = label ? `\n${chalk.bold.cyan(`--- ${label} ---`)}\n` : '';
+      const rows = [
+        ['Endpoint URL', node.endpointUrl],
+        ['Version Information', node.status],
+        ['Request Latency', `${node.latencyMs}ms`],
+        ['Retrieved At', node.retrievedAt],
+        ...metadataRows(node.metadata),
+      ];
+      if (node.error) rows.push(['Diagnostic', node.error]);
+      return `${heading}${formatTable([['Property', 'Value'], ...rows])}`;
+    };
+
+    let text = `\n${chalk.bold.green('=== Soroban RPC Node Version ===')}\n`;
+    text += renderNode(first, comparison ? 'Node 1' : undefined);
+    if (second) {
+      text += renderNode(second, 'Node 2');
+      text += `\n${chalk.bold.cyan('--- Metadata Comparison ---')}\n`;
+      text += `Software metadata matches: ${
+        comparison!.softwareMetadataMatches === null
+          ? 'Not enough software metadata to compare'
+          : comparison!.softwareMetadataMatches
+            ? 'Yes'
+            : 'No'
+      }\n`;
+      text +=
+        'Protocol differences are reported as metadata only, not as compatibility guarantees.\n';
+      const differenceRows = comparison!.differences.length
+        ? comparison!.differences.map((difference) => [
+            difference.field,
+            difference.first === null ? 'Unavailable' : JSON.stringify(difference.first),
+            difference.second === null ? 'Unavailable' : JSON.stringify(difference.second),
+          ])
+        : [['None', 'Matching', 'Matching']];
+      text += formatTable([['Field', 'Node 1', 'Node 2'], ...differenceRows]);
+    }
+
+    writeResult(outputData, options, text);
+    if (unavailable) process.exitCode = 1;
   });
 
 // ---------------------------------------------------------------------------
