@@ -462,6 +462,17 @@ Account audits include a trustline health section for non-native assets:
 npm run dev -- account G... --horizon https://horizon-testnet.stellar.org --json
 ```
 
+### Account Offers and Claimable Balances
+
+Inspect open offers for an account and claimable balance predicate details:
+
+```bash
+npm run dev -- account-offers G... --limit 25
+npm run dev -- claimable-balance <64-char-balance-id> --json
+```
+
+`account-offers` groups active offers by selling/buying pair and keeps the raw Horizon offer records in JSON output. `claimable-balance` reports the asset, amount, sponsor, last modified ledger, and claimant predicate descriptions.
+
 ### Account Merge Safety Audit
 Run a read-only preflight on the source and destination accounts before preparing a merge:
 
@@ -618,6 +629,19 @@ Supported normalized operation families include payments, create account, accoun
 ```bash
 npm run dev -- operations --account G... --limit 10 --json
 ```
+
+### Route, Effects, and Account Data Inspection
+
+Inspect path payment routes, account data entries, transaction effects, and operation effects from Horizon:
+
+```bash
+npm run dev -- path-routes --mode strict-send --source-asset XLM --source-amount 10 --destination-account G...
+npm run dev -- account-data G... --prefix app:
+npm run dev -- tx-effects <64-char-transaction-hash> --limit 25
+npm run dev -- operation-effects <operation-id> --json
+```
+
+`path-routes` supports both `strict-send` and `strict-receive` route discovery. Issued assets use `CODE:G...` notation, while native assets can be passed as `XLM` or `native`. The effects commands include normalized counts by effect type, account, and asset while preserving raw Horizon records in JSON output.
 
 ### Order Book Inspection
 Query DEX order book depth, spread, and volume for a trading pair:
