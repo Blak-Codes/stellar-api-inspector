@@ -62,6 +62,8 @@ import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import { inspectContractEnvMeta } from '../services/contract-env-meta';
 import { formatContractEnvMetaReport } from '../output/contract-env-meta-report';
+import { analyzeFeeMarket } from '../services/fee-market';
+import { formatFeeMarketReport } from '../output/fee-market-report';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -2536,6 +2538,62 @@ program
         );
         spinner.succeed(`Liquidity pool inspection complete.`);
         writeResult(report, options, formatLiquidityPoolReport(report));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(message);
+        if (options.json) outputJsonError(message);
+        logger.error(message);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// ISSUE-046: Fee Market & Surge Analysis
+// ---------------------------------------------------------------------------
+program
+  .command('fee-market')
+  .description(
+    'Analyze the current Stellar fee market, capacity pressure, and transaction inclusion conditions',
+  )
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-r, --rpc <url>', 'Soroban RPC endpoint for additional Soroban fee data (optional)')
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .option('-v, --verbose', 'Verbose mode')
+  .action(
+    async (options: {
+      horizon: string;
+      rpc?: string;
+      json?: boolean;
+      output?: string;
+      verbose?: boolean;
+    }) => {
+      if (options.verbose) logger.setLevel('debug');
+      if (options.json) logger.setJsonMode(true);
+
+      const horizonValidation = validateHorizonUrl(options.horizon);
+      if (!horizonValidation.valid) {
+        if (options.json) outputJsonError(horizonValidation.error!);
+        logger.error(horizonValidation.error!);
+        process.exit(1);
+      }
+
+      if (options.rpc) {
+        const rpcValidation = validateSorobanUrl(options.rpc);
+        if (!rpcValidation.valid) {
+          if (options.json) outputJsonError(rpcValidation.error!);
+          logger.error(rpcValidation.error!);
+          process.exit(1);
+        }
+      }
+
+      const spinner = makeSpinner('Analyzing fee market conditions...', !!options.json).start();
+
+      try {
+        const result = await analyzeFeeMarket(options.horizon, options.rpc);
+        spinner.succeed('Fee market analysis complete.');
+        writeResult(result, options, formatFeeMarketReport(result));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         spinner.fail(message);
