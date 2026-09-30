@@ -462,6 +462,17 @@ Account audits include a trustline health section for non-native assets:
 npm run dev -- account G... --horizon https://horizon-testnet.stellar.org --json
 ```
 
+### Account Offers and Claimable Balances
+
+Inspect open offers for an account and claimable balance predicate details:
+
+```bash
+npm run dev -- account-offers G... --limit 25
+npm run dev -- claimable-balance <64-char-balance-id> --json
+```
+
+`account-offers` groups active offers by selling/buying pair and keeps the raw Horizon offer records in JSON output. `claimable-balance` reports the asset, amount, sponsor, last modified ledger, and claimant predicate descriptions.
+
 ### Account Merge Safety Audit
 Run a read-only preflight on the source and destination accounts before preparing a merge:
 
