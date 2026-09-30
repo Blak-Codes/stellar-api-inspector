@@ -62,6 +62,8 @@ import { runInteractiveMode } from '../prompts/main-menu';
 import { inspectTls } from '../services/tls-inspector';
 import { inspectContractEnvMeta } from '../services/contract-env-meta';
 import { formatContractEnvMetaReport } from '../output/contract-env-meta-report';
+import { inspectMuxedAccount } from '../inspectors/muxed-account';
+import { formatMuxedAccountReport } from '../output/muxed-account-report';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -2543,6 +2545,35 @@ program
         logger.error(message);
         process.exit(1);
       }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// ISSUE-047: Muxed Account Address Inspection
+// ---------------------------------------------------------------------------
+program
+  .command('inspect-address <address>')
+  .description(
+    'Inspect a Stellar account address offline — distinguishes G... Ed25519 keys from M... muxed addresses',
+  )
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .action(
+    async (address: string, options: { json?: boolean; output?: string }) => {
+      if (options.json) logger.setJsonMode(true);
+
+      // Offline — no spinner needed; result is synchronous
+      const result = inspectMuxedAccount(address);
+
+      if (!result.isValid) {
+        if (options.json) {
+          outputJsonError(result.error ?? 'Invalid Stellar address');
+        }
+        console.log(formatMuxedAccountReport(result));
+        process.exit(1);
+      }
+
+      writeResult(result, options, formatMuxedAccountReport(result));
     },
   );
 
