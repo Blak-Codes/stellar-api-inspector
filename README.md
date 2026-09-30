@@ -562,6 +562,39 @@ npm run dev -- contract C... --rpc https://soroban-testnet.stellar.org --json
 
 If the RPC node cannot be reached, malformed contract IDs are rejected up-front with a clear error, and unknown contracts return a graceful `instance.found = false` result with an explanatory warning rather than an exception.
 
+### Soroban Contract Environment Metadata
+
+Inspect the `contractenvmetav0` custom section in a local WASM artifact without network access:
+
+```bash
+npm run dev -- contract-env-meta --wasm ./contract.wasm
+```
+
+Deployed WASM can be selected by its 32-byte hex hash or by contract ID. A contract ID is resolved through its contract-instance ledger entry, then the referenced contract-code entry is read:
+
+```bash
+npm run dev -- contract-env-meta --wasm-hash 0123...abcd --rpc https://soroban-testnet.stellar.org
+npm run dev -- contract-env-meta --contract-id C... --rpc https://soroban-testnet.stellar.org
+```
+
+Compare two artifacts by selecting one primary source and one `--compare-*` source. Supported pairs include local/local, local/deployed, and deployed/deployed:
+
+```bash
+npm run dev -- contract-env-meta --wasm ./old.wasm --compare-wasm ./new.wasm
+npm run dev -- contract-env-meta --wasm ./local.wasm --compare-contract-id C... --rpc https://soroban-testnet.stellar.org
+npm run dev -- contract-env-meta --contract-id C... --compare-contract-id C... --rpc https://soroban-testnet.stellar.org
+```
+
+The normalized report includes the environment interface version, observed protocol value, metadata entries, artifact hash, and a deterministic SHA-256 metadata fingerprint. JSON output also preserves the complete custom-section XDR as base64 and hex. Metadata states distinguish decoded, partially unsupported, absent, malformed, and unavailable artifacts. Unsupported XDR remains available in the raw representation.
+
+Comparisons list added, removed, and changed normalized entries and indicate whether fingerprints match. Version differences are observations only: the command reports compatibility as **not assessed** unless an explicit compatibility rule is added. Deployed inspection uses read-only `getLedgerEntries` RPC calls; local inspection makes no network requests. Missing ledger entries and RPC failures are reported as unavailable artifacts.
+
+```bash
+npm run dev -- contract-env-meta --wasm ./contract.wasm --json
+```
+
+JSON results are returned in the standard `{ "ok": true, "data": ... }` envelope. Each artifact includes `normalized`, `rawMetadata`, `fingerprint`, `status`, and any diagnostic; comparisons are included under `comparison`.
+
 ### Operations History
 
 Fetch and normalize recent Horizon operations:
