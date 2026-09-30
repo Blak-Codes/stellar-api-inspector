@@ -1963,7 +1963,100 @@ program
   );
 
 // ---------------------------------------------------------------------------
-// 13. Transaction Operation Analyzer
+// Transaction Result Analyzer
+// ---------------------------------------------------------------------------
+program
+  .command('result <hash>')
+  .description('Retrieve a Stellar transaction and explain its protocol result codes')
+  .option('-h, --horizon <url>', 'Horizon server endpoint', 'https://horizon-testnet.stellar.org')
+  .option('-j, --json', 'Output raw JSON (machine-readable, suppresses colors and spinners)')
+  .option('-o, --output <path>', 'Save output to file')
+  .option('-v, --verbose', 'Include decoded result XDR details')
+  .action(
+    async (
+      hash: string,
+      options: { horizon: string; json?: boolean; output?: string; verbose?: boolean },
+    ) => {
+      if (options.verbose) logger.setLevel('debug');
+      if (options.json) logger.setJsonMode(true);
+
+      const hashValidation = validateTxHash(hash);
+      if (!hashValidation.valid) {
+        if (options.json) outputJsonError(hashValidation.error!);
+        logger.error(hashValidation.error!);
+        process.exit(1);
+      }
+
+      const spinner = makeSpinner(
+        `Fetching transaction ${hash.slice(0, 12)}...`,
+        !!options.json,
+      ).start();
+
+      try {
+        const analysis = await analyzeTransactionResult({
+          horizonUrl: options.horizon,
+          hash,
+          verbose: options.verbose,
+        });
+        spinner.succeed(`Transaction result analysis complete: ${analysis.transactionResultCode}.`);
+
+        const status =
+          analysis.failureType === 'success'
+            ? chalk.green('SUCCESSFUL')
+            : analysis.failureType === 'operation'
+              ? chalk.red('OPERATION-LEVEL FAILURE')
+              : chalk.red('TRANSACTION-LEVEL FAILURE');
+        const rows: string[][] = [
+          ['Property', 'Value'],
+          ['Transaction Hash', analysis.hash],
+          ['Ledger Sequence', analysis.ledger === null ? 'Unknown' : String(analysis.ledger)],
+          ['Status', status],
+          ['Transaction Result Code', analysis.transactionResultCode],
+          ['Result Description', analysis.resultDescription],
+          ['Operations Applied', analysis.operationsApplied ? 'Yes' : 'No'],
+          ['Fee Charged', `${analysis.feeCharged} stroops`],
+          ['Operation Count', String(analysis.operationCount)],
+        ];
+        let text = `\n${chalk.bold.green('=== Transaction Result Analysis ===')}\n\n`;
+        text += formatTable(rows);
+
+        if (analysis.operationResultCodes.length > 0) {
+          text += `\n${chalk.bold.cyan('--- Operation Result Codes ---')}\n`;
+          const operationRows: string[][] = [['#', 'Operation', 'Result Code', 'Description']];
+          for (const result of analysis.operationResultCodes) {
+            operationRows.push([
+              String(result.index + 1),
+              result.operationType || '-',
+              result.code,
+              result.description,
+            ]);
+          }
+          text += formatTable(operationRows);
+        }
+
+        if (options.verbose && analysis.decodedResult) {
+          text += `\n${chalk.bold.cyan('--- Decoded Result Details ---')}\n`;
+          text += `Fee charged in result XDR: ${analysis.decodedResult.feeCharged}\n`;
+          text += `Decoded transaction result arm: ${analysis.decodedResult.transactionResult}\n`;
+        }
+
+        writeResult(analysis, options, text);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        const diagnostic =
+          message.startsWith('Unable to decode') || message.startsWith('Horizon returned')
+            ? message
+            : `Horizon transaction lookup failed: ${message}. Check the --horizon endpoint and confirm the transaction is available in its history.`;
+        spinner.fail(diagnostic);
+        if (options.json) outputJsonError(diagnostic);
+        logger.error(diagnostic);
+        process.exit(1);
+      }
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// Transaction Operation Analyzer
 // ---------------------------------------------------------------------------
 program
   .command('analyze-tx <hash>')

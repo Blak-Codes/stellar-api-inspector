@@ -1067,6 +1067,37 @@ npm run dev -- soroban-tx <transactionHash> --json --output tx-report.json
 npm run dev -- compare-endpoints https://horizon.stellar.org https://horizon-testnet.stellar.org --json --output comparison.json
 ```
 
+### Transaction Result Analysis
+
+Inspect the protocol-level outcome of a transaction retrieved from Horizon:
+
+```bash
+npm run dev -- result <transactionHash>
+npm run dev -- result <transactionHash> --horizon https://horizon.stellar.org
+npm run dev -- result <transactionHash> --json
+npm run dev -- result <transactionHash> --verbose
+```
+
+The report distinguishes successful transactions, transaction-level failures, and operation-level failures. It includes the ledger sequence, result code and explanation, whether operations were applied, fee charged, operation count, and any operation result codes. Failed transactions are atomic: when a transaction or operation fails, its operations are not applied, though the transaction fee may still be charged.
+
+Common result codes include:
+
+| Code | Meaning |
+|---|---|
+| `tx_bad_seq` | The transaction sequence number is invalid or out of date. |
+| `tx_bad_auth` | The transaction is missing required signatures. |
+| `tx_insufficient_balance` | The source account cannot cover the transaction fee. |
+| `tx_insufficient_fee` | The transaction fee is below the network minimum. |
+| `tx_too_early` / `tx_too_late` | The transaction fell outside its time bounds. |
+| `tx_failed` | An operation failed; operation-specific results follow when available. |
+| `PAYMENT_UNDERFUNDED` | A payment source does not have enough balance. |
+
+Unknown result codes remain in the report with a generic description rather than causing analysis to fail. The extensible result registry is exported from `src/services/transaction-result-analyzer.ts`. JSON output retains the raw XDR as `resultXdr`; `--verbose` adds decoded result details:
+
+```bash
+npm run dev -- result <transactionHash> --json --verbose
+```
+
 ### Transaction Operation Analysis
 
 Analyze a Stellar transaction with human-readable operation descriptions, asset movement summaries, and structured JSON output:
