@@ -751,6 +751,17 @@ npm run dev -- decode <xdrBase64> --network testnet --json
 
 Supports multi-operation transactions, memo fields, time bounds, and signature inspection.
 
+### Fee-Bump Transaction Analysis
+Analyze a regular transaction or fee-bump `TransactionEnvelope` entirely offline. A fee-bump transaction wraps an inner transaction while a separate fee source pays the outer fee. This command displays both fee ceilings, computes the effective maximum fee rate as the outer fee divided by the inner operation count plus the fee-bump operation, and keeps outer and inner signatures distinct. Signer identities are reported only when decorated signature hints match known source/signer accounts. Transaction hashes are shown when an explicit network passphrase is supplied.
+
+```bash
+npm run dev -- fee-bump <xdrBase64>
+npm run dev -- fee-bump <xdrBase64> --network testnet
+npm run dev -- fee-bump <xdrBase64> --network 'Public Global Stellar Network ; September 2015' --json
+```
+
+The report preserves the exact supplied XDR in JSON output and includes normalized outer and inner transaction structures, transaction preconditions, concise operation summaries, fee relationships, and signature counts. It never requests private keys, signs or modifies a transaction, or submits it to a network.
+
 ### Ledger Header Inspection
 Retrieve and summarize information about a specific Stellar ledger using Horizon (`GET /ledgers/{sequence}`):
 
