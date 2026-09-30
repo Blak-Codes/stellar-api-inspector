@@ -619,6 +619,19 @@ Supported normalized operation families include payments, create account, accoun
 npm run dev -- operations --account G... --limit 10 --json
 ```
 
+### Route, Effects, and Account Data Inspection
+
+Inspect path payment routes, account data entries, transaction effects, and operation effects from Horizon:
+
+```bash
+npm run dev -- path-routes --mode strict-send --source-asset XLM --source-amount 10 --destination-account G...
+npm run dev -- account-data G... --prefix app:
+npm run dev -- tx-effects <64-char-transaction-hash> --limit 25
+npm run dev -- operation-effects <operation-id> --json
+```
+
+`path-routes` supports both `strict-send` and `strict-receive` route discovery. Issued assets use `CODE:G...` notation, while native assets can be passed as `XLM` or `native`. The effects commands include normalized counts by effect type, account, and asset while preserving raw Horizon records in JSON output.
+
 ### Order Book Inspection
 Query DEX order book depth, spread, and volume for a trading pair:
 
